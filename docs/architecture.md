@@ -28,7 +28,7 @@ flowchart LR
 | `(authed)` layout | No profile goes to onboarding; an unverified profile goes to `/pending` |
 | Row-level security | RLS is on for every table in the `public` schema; member-facing tables carry members-only policies for the `authenticated` role, and server-only tables carry none. `anon` holds no table privilege. Server code reads identity with `getUser()`, never `getSession()` |
 
-**Never indexable.** `noindex` is set in the root metadata and in an `X-Robots-Tag` header that also covers non-HTML responses, and `robots.ts` disallows every crawler from every path.
+**Kept out of search.** `robots.ts` disallows every crawler from every path, and every response also carries `noindex`, in the root metadata and in an `X-Robots-Tag` header that covers non-HTML responses.
 
 ---
 
@@ -71,6 +71,7 @@ sequenceDiagram
 | A code obtained later | `/pending`, Apply Code: limited per account by the hour, counted in a server-only table before any code is read |
 
 - **Members share codes; they do not mint them.** Only a moderator or the service role creates an invite, each with a use cap and an expiry.
+- **A code binds only if its creator can still vouch.** A code with no creator, or one whose creator is no longer a verified member, is never bound, so its holder waits for a moderator like anyone without a code.
 - **The app never calls Cloudflare's verification endpoint.** The token is single use, and verifying it in the app would spend it, so Auth would reject every real sign-in.
 
 ---
@@ -135,7 +136,7 @@ Four techniques close the gaps that policies alone leave open.
 |---|---|---|
 | Accepted (private bucket) | PNG, JPEG, WebP, GIF, up to 10 MB | PDF, plain text, CSV, up to 25 MB |
 | Stored as | Resized and re-encoded in the browser by the app's uploader, which drops EXIF metadata, GPS location included, before upload | Byte for byte, under a generated name |
-| Limit | 4 per post, by a check constraint | 4 per post, by a trigger under an advisory lock |
+| Limit | 4 per post, by a check constraint on the post's photo list | 4 per post, by a trigger under an advisory lock |
 | Opened by | A URL signed for an hour when the page renders | `/files/<id>`, which checks access and answers `303` to a URL signed for 60 seconds, always as a download |
 
 - **Reads follow the post.** A signed URL for a photo or file is issued only to someone who can read its thread, with no exception for moderators.
@@ -145,7 +146,7 @@ Four techniques close the gaps that policies alone leave open.
 
 ## 6. Notifications
 
-Every notification except the transactional access-approved email goes through one function, `deliver()`; sign-in mail is Supabase Auth's own and never passes through the app. A second place to send is how a rule goes missing from one template out of eight.
+Notifications go through one function, `deliver()`, because a second place to send is how a rule goes missing from one of the eight email templates. The one exception is the access-approved email, sent once when a person is let in: it is transactional, like the sign-in email, so there is no preference or unsubscribe to apply. Sign-in mail is Supabase Auth's own and never passes through the app.
 
 ```mermaid
 flowchart TB
@@ -206,4 +207,4 @@ flowchart LR
 
 - **Deploys are manual** from the Vercel CLI. Rollback is promoting the previous production deployment.
 - **A short weekly checklist** works alongside Sentry's error reports: stuck sign-ups, the review queue, server errors, mail sending and backups, among other items.
-- **Test walks on production never act as the owner or post where members can see it.** Apart from a one-time smoke test, every walk uses a throwaway member inside a private group.
+- **Test walks on production use a throwaway member inside a private group**, never the owner's account and never a place members can see. The one recorded exception is the owner's smoke test before the network was first shared.

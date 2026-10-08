@@ -106,14 +106,14 @@ flowchart TB
 
 **Challenge**: Several member actions email another member, and some can be repeated on demand, such as cancelling and re-sending a connection request. A network-wide cap would stop one member's flood by silencing everyone else.
 
-**Solution**: Per-member hourly and daily limits in `deliver()`, plus a short spacing rule for the same sender, recipient and subject. A first version that read the count and then wrote it let a parallel burst through, so the decision and the record are now one statement under a per-member advisory lock: one member's sends queue behind each other, and nobody else waits.
+**Solution**: Per-member hourly and daily limits in `deliver()`, plus a short spacing rule for the same sender, recipient and subject. A first version that read the count and then wrote it let a parallel burst through, so one function call now decides and records under a per-member advisory lock: one member's sends queue behind each other, and nobody else waits.
 
 ## Key Decisions
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
 | 2026-06-14 | Build the defined product, and change it only for real problems that affect members | Every later change is argued against this rule in the decision log |
-| 2026-06-16 | Adopt two items the launch audit had cut: a CI gate and error monitoring | Once the app was live, I wanted it diagnosable and safe to change. The CI gate took effect then; the Sentry code shipped then and went live in production on 2026-09-20, when its key was set |
+| 2026-06-16 | Adopt two items the launch audit had cut: a CI gate and error monitoring | Once the app was live, I wanted it diagnosable and safe to change. The CI gate took effect then; Sentry went live in production on 2026-09-20 |
 | 2026-09-20 | Freeze ownership and scope columns by trigger | An UPDATE policy cannot compare a column's old and new values, so it cannot stop a row leaving its group |
 | 2026-09-20 | Sign-in links by token hash, plus an 8-digit code | The default link works only in the browser that asked for it, and a phone opens it inside the mail app's own browser, so links tapped within seconds still failed |
 | 2026-09-21 | The human check runs before anything about an invite | Changing the order needs no second verification, which would spend the single-use token |
@@ -133,7 +133,7 @@ flowchart TB
 From the source repository at the head of `main` (2026-09-25):
 
 - **Live since June 2026**, with member moderators
-- **46 database migrations; 25 tables, each with row-level security enabled**
+- **46 database migrations; 25 tables, all in the `public` schema and each with row-level security enabled**
 - **38 integration, 74 unit and 28 end-to-end test files**; the integration tests sign in as different members against a Supabase stack started for the run, on a laptop and in CI, to check the RLS rules
 - **82 pull requests merged** to `main`
 - **Eight notification email types plus web push**; every type except the access-approved email has its own switch and unsubscribe link
@@ -141,14 +141,16 @@ From the source repository at the head of `main` (2026-09-25):
 
 ## Project Status
 
+As the repository records it at the head of `main` (2026-09-25):
+
 | Area | Status | Description |
 |------|--------|-------------|
 | Production | Live | Serving on its own domain since 2026-06-15 |
 | Directory, Reconnect, forum and study groups | Live | Per-field contact privacy enforced in the database; mutual opt-in connections; public, private and hidden groups with events |
 | Trust and safety | Live | Invite and vouch, moderator review queue, report, block, suspend, action log |
 | Human check, error monitoring, notifications | Live | Turnstile enforced on join; Sentry and web push live in production since 2026-09-20 |
-| Weekly summary email | Built | Not yet switched on in production as of 2026-09-23: its cron route refuses every run until its secret is set |
-| Photo and file attachments on posts (up to four of each), Markdown subset, long-post folding, forum index layout | Merged | Merged to `main` on 2026-09-24 and 2026-09-25; the repository does not record their production deploy |
+| Weekly summary email | Built | Not switched on in production: its cron route refuses every run until its secret is set |
+| Photo and file attachments on posts (up to four of each), Markdown subset, long-post folding, forum index layout | Merged | Merged to `main` on 2026-09-24 and 2026-09-25; deploys are manual, and the repository does not yet record one for these |
 
 ---
 
