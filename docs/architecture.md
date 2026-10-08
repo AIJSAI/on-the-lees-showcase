@@ -4,9 +4,9 @@ On the Lees is a members-only, real-name network for sommeliers and wine profess
 
 ---
 
-## 1. Three Gates on Every Request
+## 1. Three Gates on Every Member Request
 
-A page is only as private as its weakest layer, so access is checked three times, and the database check is the one that cannot be skipped.
+Access to a member page is checked three times. The database check binds every read and write a member's session makes. Server code that has to act beyond one member's rights (invite lookups and redemption, the storage sweep, the send counters) runs as the service role or a `security definer` function, which RLS does not bind by design.
 
 ```mermaid
 flowchart LR
@@ -28,7 +28,7 @@ flowchart LR
 | `(authed)` layout | No profile goes to onboarding; an unverified profile goes to `/pending` |
 | Row-level security | RLS is on for every table in the `public` schema; member-facing tables carry members-only policies for the `authenticated` role, and server-only tables carry none. `anon` holds no table privilege. Server code reads identity with `getUser()`, never `getSession()` |
 
-**Never indexable.** `noindex` is set in the root metadata, in `robots.ts`, and in an `X-Robots-Tag` header that also covers non-HTML responses.
+**Never indexable.** `noindex` is set in the root metadata and in an `X-Robots-Tag` header that also covers non-HTML responses, and `robots.ts` disallows every crawler from every path.
 
 ---
 
@@ -53,13 +53,13 @@ sequenceDiagram
     A->>M: sign-in email (token-hash link + 8-digit code)
     A-->>J: accepted
     Note over J,DB: Only now is the invite code read
-    J->>DB: look up code (service role), bind it to this email if its inviter can still vouch
+    J->>DB: look up code (service role), bind it to this email if the code's creator is still a verified member
     J-->>V: "An email was sent" (same answer for a valid code, an invalid one, or none)
     V->>J: open the link (/auth/confirm), then press Sign In (/auth/continue)
     Note over V,J: The link GET does not spend the token, so mail scanners and previews cannot burn it
     J->>A: verifyOtp(token_hash)
     V->>J: finish onboarding (profile)
-    J->>DB: redeem the invite (service role): vouch inserted
+    J->>DB: redeem the invite (service role): the creator's vouch inserted
     DB->>DB: trigger sets is_verified
     J-->>V: redirect to the forum
 ```
@@ -106,7 +106,7 @@ erDiagram
     profiles |o--o{ mod_actions : "actor"
 ```
 
-The other five hold notification settings and the server-only counters and watermarks that no client role holds a grant on.
+The other five hold notification settings, registered push devices, and three server-only tables that no client role holds a grant on: the Apply Code attempt counter, the notification send counter and the weekly-summary watermarks.
 
 **One forum table for everything.** The lobby and every group's forum are the same `threads` table, scoped by `group_id` (NULL is the lobby), and every group-scoped read goes through one SQL helper. Private and hidden groups read identically and differ only in whether the group can be discovered.
 
@@ -134,18 +134,18 @@ Four techniques close the gaps that policies alone leave open.
 | | Photos | Files |
 |---|---|---|
 | Accepted (private bucket) | PNG, JPEG, WebP, GIF, up to 10 MB | PDF, plain text, CSV, up to 25 MB |
-| Stored as | Resized and re-encoded on the device, so EXIF and GPS data never leave it | Byte for byte, under a generated name |
+| Stored as | Resized and re-encoded in the browser by the app's uploader, which drops EXIF metadata, GPS location included, before upload | Byte for byte, under a generated name |
 | Limit | 4 per post, by a check constraint | 4 per post, by a trigger under an advisory lock |
 | Opened by | A URL signed for an hour when the page renders | `/files/<id>`, which checks access and answers `303` to a URL signed for 60 seconds, always as a download |
 
-- **Reads follow the post.** Whoever can read the thread can open its photos and files, and nobody else can, moderators included.
+- **Reads follow the post.** A signed URL for a photo or file is issued only to someone who can read its thread, with no exception for moderators.
 - **Deletes clean up after themselves.** A sweep runs as the service role, only after RLS allowed the delete and only inside the post author's folder, so a forged reference to another member's photo is never removed.
 
 ---
 
 ## 6. Notifications
 
-Every notification except the transactional access-approved email goes through one function, `deliver()`. A second place to send is how a rule goes missing from one template out of eight.
+Every notification except the transactional access-approved email goes through one function, `deliver()`; sign-in mail is Supabase Auth's own and never passes through the app. A second place to send is how a rule goes missing from one template out of eight.
 
 ```mermaid
 flowchart TB
@@ -176,7 +176,7 @@ flowchart TB
 ## 7. Privacy in Monitoring and Caching
 
 - **Sentry, errors first.** No session replay, `sendDefaultPii: false`, light sampled tracing, and a scrubber that trims exception messages, because a database error can carry a member's email or phone.
-- **No offline cache.** The service worker has no fetch handler. Phones get shared, and member pages must not stay in a browser cache after sign-out.
+- **No service-worker cache.** The service worker has no fetch handler, so it never stores a member page; phones get shared.
 
 ---
 
@@ -195,15 +195,15 @@ flowchart LR
     GATE --> MAIN["Merge to main"]
 ```
 
-- **RLS is tested, not assumed.** Integration tests sign in as different members against a real local Supabase to check that a non-member cannot read anything newly gated. A structural test fails the build if any public table lacks RLS or `anon` is granted a table privilege.
+- **Integration tests check RLS.** They sign in as different members against a local Supabase to check that a non-member cannot read anything newly gated. A structural test fails the build if any public table lacks RLS or `anon` is granted a table privilege.
 - **End-to-end tests run against a production build**, on desktop Chromium, with twelve phone-critical surfaces run again on iPhone WebKit. Specs sign in through the real door with the one-time token the email carries.
 - **A tap-target guard** on iPhone WebKit measures the controls on the main pages, apart from a short commented list of exemptions, and fails when one drops under 44 by 44 pixels. It was added after a measurement found nearly half the controls under the rule.
-- **The project's Definition of Done** for a pull request also lists unit tests for new logic, an RLS test for anything newly gated, an end-to-end happy path, screenshots at 1280 and 390 pixels actually looked at, and the copy lint. Branch protection requires the build and test checks and resolved review threads; end-to-end runs for signal.
+- **The project's Definition of Done** for a pull request also lists unit tests for new logic, an RLS test for anything newly gated, an end-to-end happy path, screenshots at 1280 and 390 pixels reviewed by eye, and the copy lint. Branch protection requires the build and test checks and resolved review threads; end-to-end runs for signal.
 
 ---
 
 ## 9. Operations
 
 - **Deploys are manual** from the Vercel CLI. Rollback is promoting the previous production deployment.
-- **A short weekly checklist** stands in for a monitoring stack: stuck sign-ups, the review queue, server errors, mail sending and backups, among other items.
-- **Test walks never write production as the owner or with test content**, apart from a one-time smoke test. Every other walk uses a throwaway member and a private group.
+- **A short weekly checklist** works alongside Sentry's error reports: stuck sign-ups, the review queue, server errors, mail sending and backups, among other items.
+- **Test walks on production never act as the owner or post where members can see it.** Apart from a one-time smoke test, every walk uses a throwaway member inside a private group.
