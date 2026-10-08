@@ -126,7 +126,7 @@ flowchart TB
 - **Write policies need the same scrutiny as read policies.** A row could change the very column its read policy scopes on.
 - **A limit needs its check and its record under one lock.** Counting in one query and recording in the next let a parallel burst through; a per-member advisory lock around one `security definer` function now serializes them.
 - **A local stack is not evidence about production.** Default privileges and auth rate limits differ between the two, so grants are now stated explicitly in a migration rather than trusted to defaults, and production's own configuration is read before a number about it is quoted.
-- **A phone opens a sign-in link in the mail app's own browser.** The default magic link only works in the browser that asked for it, so sign-in now uses a token-hash link that needs no cookie, plus an 8-digit code that works anywhere.
+- **A phone opens a sign-in link in the mail app's own browser.** The default magic link only works in the browser that asked for it, so sign-in now uses a token-hash link that needs no PKCE cookie from that browser, plus an 8-digit code that works anywhere.
 
 ## Results
 
