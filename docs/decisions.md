@@ -15,10 +15,10 @@ This page covers the six decisions in the README's table, in date order, from th
 
 ### 2. Reverse Two Launch-Time Cuts: A CI Gate and Error Monitoring
 
-**Date**: 2026-06-16
+**Date**: 2026-06-16 (Sentry live in production from 2026-09-20)
 **Context**: Before the app was shared, a seven-dimension audit with adversarial verification fixed what a member would feel (among other things, the private app was indexable, and its `noindex` settings date from that audit) and cut what would not make the app better for a member. Among the cuts were per-field privacy enforced in the database, list pagination, disposable-email blocking, a captcha, error monitoring and a CI gate. Once the app was live, the question shifted from "ship it" to "make it diagnosable and safe to change."
 **Decision**:
-- **CI and branch protection.** Every pull request runs build, lint, typecheck, the Vitest suite (including RLS tests against an ephemeral Supabase) and Playwright. `main` requires the build and test checks and, since 2026-07-06, that every review thread is resolved.
+- **CI and branch protection.** Every pull request runs build, lint, typecheck, the Vitest suite (including RLS tests against an ephemeral Supabase) and Playwright. `main` requires the `build` job (lint, typecheck, build) and the `test` job (the Vitest suite) to pass and, since 2026-07-06, every review thread to be resolved; Playwright runs for signal.
 - **Sentry, errors first.** Light tracing, no session replay (a real-name network), `sendDefaultPii: false`, and console capture, so the existing `console.error` sites became searchable events with no call-site changes. A `beforeSend` scrubber drops the console argument echo and keeps only the first line of each exception message, because Supabase errors carry the offending value, such as a member's email or phone, in their details.
 
 **Consequences**:
@@ -29,21 +29,21 @@ This page covers the six decisions in the README's table, in date order, from th
 ### 3. Database Hardening: Scope the Writes the Way the Reads Were Scoped
 
 **Date**: 2026-09-20 (from a read-only audit of the migrations on 2026-09-19)
-**Context**: The audit read the write side, which the read policies did not cover. Most of its findings were on the write side, where reads were scoped and writes were not, so a row could change the very column its read policy scopes on; the rest tightened reads. Each finding was reproduced on a local stack before it was fixed, and each fix ships with an integration RLS test.
+**Context**: The audit read every policy in the migrations. Most of its findings were on the write side, where reads were scoped and writes were not, so a row could change the very column its read policy scopes on; the rest tightened reads. Each finding was reproduced on a local stack before it was fixed, and each fix ships with an integration RLS test.
 **Decision**:
 1. **Freeze scope columns with a trigger, not a `WITH CHECK`.** A `WITH CHECK` sees only the new row and cannot compare it with the old one, so it cannot stop a row leaving its group, and mirroring the insert policy would take an author's edit rights away the day they left. Authorship, membership records, a report's reporter and target, a reply's parent and every primary key are frozen.
 2. **Grant the predicates a policy names.** A policy is permission-checked as the calling role, so revoking execute across the schema broke ordinary reads. Policy helpers keep an explicit grant to `authenticated`; `anon` keeps none. The two predicates that answer about another member moved to a private schema the API does not expose.
 3. **Applicants and suspended members are not readable by ordinary members**, and the settings copy says exactly what the app does.
-4. **Broadcast an invite only when its minter says so.** A code minted for one guest should reach that guest, not every member, so the Invite page shows only a code its minter marked `shared`, and every code is minted by a moderator.
+4. **Broadcast an invite only when its minter says so.** A code minted for one guest should reach that guest, not every member, so the Invite page shows only a code its minter marked `shared`, and every code is minted by a moderator, so a code vouches for its holder in that moderator's name.
 5. **Keep the weekly summary's watermark in its own server-only table.** A member can update their own preference row, so a watermark there could be rewritten to repeat or suppress their own summary.
 
-**Consequences**: Storage reads now follow the post that references the object. A new network-wide invite must be minted with `shared` on, or the Invite page goes empty.
+**Consequences**: Storage reads now follow the post that references the object, one of the read-side fixes. A new network-wide invite must be minted with `shared` on, or the Invite page goes empty.
 
 ### 4. Sign-In Links by Token Hash, With a Typed Code
 
 **Date**: 2026-09-20 (recorded in the runbook)
 **Context**: The default magic link works only in the browser that asked for it, but a phone opens the link inside the mail app's own browser, so links tapped within seconds still failed.
-**Decision**: The email templates link by token hash, redeemed by `/auth/confirm` without the PKCE cookie the default link needs from the browser that asked for it, and carry an 8-digit code that works in any browser. The confirm GET does not spend the token, because mail scanners and link previews issue it; a button press on the next step does. On that first request the token moves out of the URL into a 10-minute `httpOnly` cookie, so no later request's log line, the next page's referrer or a Sentry event carries it.
+**Decision**: The email templates link by token hash to `/auth/confirm`, which needs no PKCE cookie from the browser that asked for the link, and carry an 8-digit code that works in any browser. That GET does not spend the token, because mail scanners and link previews issue it; the Sign In button on the next step (`/auth/continue`) redeems it. On that first request the token moves out of the URL into a 10-minute `httpOnly` cookie, so no later request's log line, the next page's referrer or a Sentry event carries it.
 **Consequences**: The code length stays at 8, since anyone can request a code for any address and 6 digits would cut the guessing work a hundredfold. Old-style links in inboxes keep working.
 
 ### 5. The Human Check Runs Before Anything About an Invite
@@ -64,6 +64,6 @@ This page covers the six decisions in the README's table, in date order, from th
 - **Push has its own, wider limits that ignore the subject.** Making a group is free, so a window keyed on the group is "make another group" away from no window at all.
 - **One function call decides and records.** The first version read the count and then wrote it, and a parallel burst got past the hourly ceiling. One `security definer` function, holding a per-member advisory lock for its transaction, now decides, records and prunes; the prune, the only part that crosses members, is bounded.
 - **It fails closed:** a counter that cannot be read skips the email, and the member's own action still succeeds. The one action refused outright is a bulk add larger than the hour's allowance, turned away before anyone is added.
-- **Same sender, recipient, type and subject: spaced by minutes, capped by the day.** A whole-day rule was tried first and took away the second reply of an afternoon, which is the traffic the site exists for.
+- **Same sender, recipient, type and subject: spaced by minutes, capped by the day**, inside the per-member hourly and daily limits. A whole-day rule was tried first and took away the second reply of an afternoon, which is the traffic the site exists for.
 
 **Consequences**: The counter is server-only and prunes itself at 30 days, matching the privacy page. Bulk adds are capped at the hour's allowance, so an owner is never told members were added when the cap then refused to tell them.

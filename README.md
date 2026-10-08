@@ -19,7 +19,7 @@ The requirements that followed:
 - **Private from the start.** Every member-facing page is behind sign-in. `noindex` is set in the page metadata and in an `X-Robots-Tag` response header, and `robots.ts` disallows every crawler.
 - **Real names, gated by trust.** A new member gets in with an invite code a member shares, or by asking for access and waiting for a moderator's approval. Either path records a vouch, and a vouch is what verifies a member.
 - **The network is the product.** The directory, forum and study groups are its core; Reconnect is one feature among them.
-- **Phones first.** Every control a thumb has to hit is at least 44 by 44 pixels on a phone, checked by a test on the iPhone engine, and the app installs to a home screen.
+- **Phones first.** Controls a thumb has to hit are at least 44 by 44 pixels on a phone, measured on the main pages by a Playwright test in WebKit with iPhone emulation, and the app installs to a home screen.
 
 ## Architecture
 
@@ -81,7 +81,7 @@ flowchart TB
 | Technology | Role | Why This Choice |
 |-----------|------|-----------------|
 | Next.js 16 (App Router), React 19, TypeScript strict, Zod 4 | Web app | Server Components by default; client code only for forms, uploads and filters |
-| Supabase Postgres + RLS | Data and authorization | The database decides who reads and writes what, so a missed UI check cannot leak a row |
+| Supabase Postgres + RLS | Data and authorization | The database decides who reads and writes what, so a missed UI check cannot leak a row through a member's session |
 | Supabase Auth | Sign-in | Passwordless link or 8-digit code; Turnstile verified inside Auth |
 | Resend + Web Push (VAPID) | Email and phone notifications | The service worker handles push only, with no cache, because phones get shared |
 | Sentry | Error monitoring | No session replay, PII scrubbed before send |

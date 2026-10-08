@@ -28,7 +28,7 @@ flowchart LR
 | `(authed)` layout | No profile goes to onboarding; an unverified profile goes to `/pending` |
 | Row-level security | RLS is on for every table in the `public` schema; member-facing tables carry members-only policies for the `authenticated` role, and server-only tables carry none. `anon` holds no table privilege. Server code reads identity with `getUser()`, never `getSession()` |
 
-**Kept out of search.** `robots.ts` disallows every crawler from every path, and every response also carries `noindex`, in the root metadata and in an `X-Robots-Tag` header that covers non-HTML responses.
+**Not crawled, and marked noindex.** `robots.ts` disallows every crawler from every path, and every response also carries `noindex`, in the root metadata and in an `X-Robots-Tag` header that covers non-HTML responses.
 
 ---
 
@@ -70,7 +70,7 @@ sequenceDiagram
 | No code | They wait on `/pending`; a moderator's approval is a vouch, so it verifies them the same way |
 | A code obtained later | `/pending`, Apply Code: limited per account by the hour, counted in a server-only table before any code is read |
 
-- **Members share codes; they do not mint them.** Only a moderator or the service role creates an invite, each with a use cap and an expiry.
+- **Members share codes; they do not mint them.** Only a moderator creates an invite, in the app or through the service role with the moderator recorded as its creator, and each has a use cap and an expiry.
 - **A code binds only if its creator can still vouch.** A code with no creator, or one whose creator is no longer a verified member, is never bound, so its holder waits for a moderator like anyone without a code.
 - **The app never calls Cloudflare's verification endpoint.** The token is single use, and verifying it in the app would spend it, so Auth would reject every real sign-in.
 
@@ -146,7 +146,7 @@ Four techniques close the gaps that policies alone leave open.
 
 ## 6. Notifications
 
-Notifications go through one function, `deliver()`, because a second place to send is how a rule goes missing from one of the eight email templates. The one exception is the access-approved email, sent once when a person is let in: it is transactional, like the sign-in email, so there is no preference or unsubscribe to apply. Sign-in mail is Supabase Auth's own and never passes through the app.
+Notifications go through one function, `deliver()`, because a second place to send is how a rule goes missing from one of the eight email templates. Seven of the eight go through it; the exception is the access-approved email, sent once when a person is let in: it is transactional, like the sign-in email, so there is no preference or unsubscribe to apply. Sign-in mail is Supabase Auth's own and never passes through the app.
 
 ```mermaid
 flowchart TB
@@ -161,7 +161,7 @@ flowchart TB
     ERES -->|"allowed"| MAIL["Resend<br/>+ signed unsubscribe link"]
     ERES -->|"capped or<br/>counter unreadable"| LOG["Email skipped,<br/>one log line"]
     PRES -->|"allowed"| PUSH["Web Push"]
-    PRES -->|"over ration"| DROP["Dropped silently,<br/>one log line"]
+    PRES -->|"over ration or<br/>counter unreadable"| DROP["Dropped silently,<br/>one log line"]
 ```
 
 - **Email is limited per member**, by the hour and by the day, so one member's flood never silences everyone else.
@@ -176,7 +176,7 @@ flowchart TB
 
 ## 7. Privacy in Monitoring and Caching
 
-- **Sentry, errors first.** No session replay, `sendDefaultPii: false`, light sampled tracing, and a scrubber that trims exception messages, because a database error can carry a member's email or phone.
+- **Sentry, errors first.** No session replay, `sendDefaultPii: false`, light sampled tracing, and a scrubber that drops the console argument echo and keeps only the first line of each exception message, because a database error can carry a member's email or phone in its details.
 - **No service-worker cache.** The service worker has no fetch handler, so it never stores a member page; phones get shared.
 
 ---
@@ -196,9 +196,9 @@ flowchart LR
     GATE --> MAIN["Merge to main"]
 ```
 
-- **Integration tests check RLS.** They sign in as different members against a local Supabase to check that a non-member cannot read anything newly gated. A structural test fails the build if any public table lacks RLS or `anon` is granted a table privilege.
+- **Integration tests check RLS.** They sign in as different members against a local Supabase to check that a non-member cannot read anything newly gated. A structural test in the required `test` job fails if any public table lacks RLS or `anon` is granted a table privilege.
 - **End-to-end tests run against a production build**, on desktop Chromium, with twelve phone-critical surfaces run again on iPhone WebKit. Specs sign in through the real door with the one-time token the email carries.
-- **A tap-target guard** on iPhone WebKit measures the controls on the main pages, apart from a short commented list of exemptions, and fails when one drops under 44 by 44 pixels. It was added after a measurement found nearly half the controls under the rule.
+- **A tap-target guard** on iPhone WebKit measures the controls on the main pages, apart from a short commented list of exemptions, and fails the end-to-end job when one drops under 44 by 44 pixels. It was added after a measurement found nearly half the controls under the rule.
 - **The project's Definition of Done** for a pull request also lists unit tests for new logic, an RLS test for anything newly gated, an end-to-end happy path, screenshots at 1280 and 390 pixels reviewed by eye, and the copy lint. Branch protection requires the build and test checks and resolved review threads; end-to-end runs for signal.
 
 ---
