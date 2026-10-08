@@ -1,6 +1,6 @@
 # Architecture: On the Lees
 
-This page goes one level below the [README](../README.md). Table and route names are from the private repository; no member data appears here.
+On the Lees is a members-only, real-name network for sommeliers and wine professionals. This page goes one level below the [README](../README.md). Table and route names are from the private repository; no member data appears here.
 
 ---
 
@@ -26,7 +26,7 @@ flowchart LR
 |-------|-----------------|
 | Proxy (`proxy.ts`, Next 16's name for middleware) | Refreshes the session cookie; a non-public route without a session goes to `/join` |
 | `(authed)` layout | No profile goes to onboarding; an unverified profile goes to `/pending` |
-| Row-level security | RLS is on for every public table; member-facing tables carry members-only policies for the `authenticated` role, and server-only tables carry none. `anon` holds no table privilege. Server code reads identity with `getUser()`, never `getSession()` |
+| Row-level security | RLS is on for every table in the `public` schema; member-facing tables carry members-only policies for the `authenticated` role, and server-only tables carry none. `anon` holds no table privilege. Server code reads identity with `getUser()`, never `getSession()` |
 
 **Never indexable.** `noindex` is set in the root metadata, in `robots.ts`, and in an `X-Robots-Tag` header that also covers non-HTML responses.
 
@@ -150,7 +150,7 @@ Every notification except the transactional access-approved email goes through o
 ```mermaid
 flowchart TB
     ACT["Member action<br/>(reply, connection, group add...)"] --> DEL
-    CRON["Weekly cron<br/>(bearer secret, no actor)"] --> DEL
+    CRON["Weekly summary cron<br/>(bearer secret, no actor;<br/>off until its secret is set)"] --> DEL
     DEL["deliver()"] --> SUS{"Recipient readable<br/>and not suspended?"}
     SUS -->|"no"| SKIP["Nothing sent"]
     SUS -->|"yes"| PREF{"Preferences<br/>readable?"}
@@ -163,13 +163,13 @@ flowchart TB
     PRES -->|"over ration"| DROP["Dropped silently,<br/>one log line"]
 ```
 
-- **Email is capped per actor**, by the hour and by the day, so one member can spend under half the shared daily quota.
-- **One actor to one recipient** about the same type and subject is spaced out by minutes and capped by the day, which closes the cancel-and-repeat loops without taking the second reply of an afternoon.
+- **Email is limited per member**, by the hour and by the day, so one member's flood never silences everyone else.
+- **One sender to one recipient** about the same type and subject is spaced out by minutes and capped by the day, which stops a repeated action from mailing the same person again and again without taking the second reply of an afternoon.
 - **Push has its own, wider limits** that ignore the subject, because making a group is free and a window keyed on the group is one new group away from no window at all.
 - **A bulk add is capped at the hour's allowance**, since each add mails the member added.
 
 - **Decided and recorded in one statement.** The reservation is one `security definer` function under a per-actor advisory lock, so one member's sends queue behind each other and nobody else waits. A counter that cannot be read skips the email; the member's action still succeeds.
-- **The weekly summary** claims each member's watermark row before their message goes out, so two overlapping runs cannot both mail the same member.
+- **The weekly summary**, built but not yet switched on in production, claims each member's watermark row before their message goes out, so two overlapping runs cannot both mail the same member.
 
 ---
 
@@ -195,7 +195,7 @@ flowchart LR
     GATE --> MAIN["Merge to main"]
 ```
 
-- **RLS is proved, not assumed.** Integration tests sign in as different members against a real local Supabase to prove a non-member cannot read anything newly gated. A structural test fails the build if any public table lacks RLS or `anon` is granted a table privilege.
+- **RLS is tested, not assumed.** Integration tests sign in as different members against a real local Supabase to check that a non-member cannot read anything newly gated. A structural test fails the build if any public table lacks RLS or `anon` is granted a table privilege.
 - **End-to-end tests run against a production build**, on desktop Chromium, with twelve phone-critical surfaces run again on iPhone WebKit. Specs sign in through the real door with the one-time token the email carries.
 - **A tap-target guard** on iPhone WebKit measures the controls on the main pages, apart from a short commented list of exemptions, and fails when one drops under 44 by 44 pixels. It was added after a measurement found nearly half the controls under the rule.
 - **The project's Definition of Done** for a pull request also lists unit tests for new logic, an RLS test for anything newly gated, an end-to-end happy path, screenshots at 1280 and 390 pixels actually looked at, and the copy lint. Branch protection requires the build and test checks and resolved review threads; end-to-end runs for signal.
@@ -205,5 +205,5 @@ flowchart LR
 ## 9. Operations
 
 - **Deploys are manual** from the Vercel CLI. Rollback is promoting the previous production deployment.
-- **A short weekly checklist** stands in for a monitoring stack: stuck sign-ups, the review queue, server errors, the email quota and backups, among other items.
+- **A short weekly checklist** stands in for a monitoring stack: stuck sign-ups, the review queue, server errors, mail sending and backups, among other items.
 - **Test walks never write production as the owner or with test content**, apart from a one-time smoke test. Every other walk uses a throwaway member and a private group.
