@@ -43,7 +43,7 @@ flowchart TB
     subgraph Supabase["Supabase"]
         AUTH["Auth<br/>magic link + 8-digit code"]
         PG[("Postgres<br/>RLS on every table,<br/>anon holds no grant")]
-        ST[("Storage<br/>4 private buckets,<br/>signed URLs only")]
+        ST[("Storage<br/>private buckets,<br/>signed URLs only")]
     end
 
     TS["Cloudflare Turnstile"]
@@ -62,7 +62,7 @@ flowchart TB
     FILES --> ST
     RSC --> DEL
     CRON --> DEL
-    DEL -->|"reserve_notification_send<br/>one locked statement"| PG
+    DEL -->|"reserve the send<br/>in one locked statement"| PG
     DEL --> RS
     DEL --> WP
     RSC -.-> SE
@@ -72,7 +72,7 @@ flowchart TB
 |-----------|----------|
 | **`proxy.ts`** | Next 16's replacement for middleware. Refreshes the Supabase session and sends any signed-out request for a non-public route to `/join`. Public routes: `/`, `/join`, `/auth/*`, `/legal/*`, the install page, the web manifest, the push service worker, the unsubscribe link, and the weekly cron route, which checks its own bearer secret |
 | **Row-level security** | RLS is on for every public table. Member-facing tables carry members-only policies for the `authenticated` role; three server-only tables carry no policy and no grant. `anon` is denied everywhere and holds no table grant |
-| **Private Storage** | Four buckets, own-folder uploads, short-lived signed URLs, read policies that follow the post; photos lose EXIF and GPS data on the device |
+| **Private Storage** | Private buckets, own-folder uploads, short-lived signed URLs, read policies that follow the post; photos lose EXIF and GPS data on the device |
 | **`deliver()`** | The path for every notification except the transactional access-approved email: the suspended check, preferences, per-member send caps, and a signed one-click unsubscribe link |
 
 ## Tech Stack
@@ -99,22 +99,22 @@ flowchart TB
 
 **Challenge**: The join action read and bound an invite code before calling Supabase's sign-in, the only place the human-check token is verified. Anyone could guess codes at any rate, and a hit was vouched in after sign-in and onboarding.
 
-**Solution**: Order is the fix: the sign-in email goes first, and the code is read only after Supabase accepts. The signed-in code door measured 878 guesses a minute from one account on a local stack; it now allows five an hour and fails closed.
+**Solution**: Order is the fix: the sign-in email goes first, and the code is read only after Supabase accepts. The signed-in door for applying a code is now limited per account by the hour, counted before any code is read, and it fails closed.
 
 ### 3. One Member Could Take the Front Door Down
 
-**Challenge**: Sign-in and notification mail share one quota of about 100 emails a day. Two legal loops let one member mail the same person without limit, and once the quota is spent nobody can sign in.
+**Challenge**: Sign-in and notification mail share one daily sending quota. Two legal loops let one member mail the same person without limit, and once the quota is spent nobody can sign in.
 
-**Solution**: Per-actor caps in `deliver()`: 20 emails an hour and 40 a day. A first version that read the count and then wrote it let forty parallel reservations past a ceiling of twenty; the decision and the row are now one statement under a per-actor advisory lock.
+**Solution**: Per-actor hourly and daily caps in `deliver()`, set so one member can use under half the daily quota. A first version that read the count and then wrote it let every reservation in a parallel burst past the hourly ceiling; the decision and the row are now one statement under a per-actor advisory lock.
 
 ## Key Decisions
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
 | 2026-06-14 | No over-engineering, no feature additions | A small, unproven, non-commercial project: ship the defined product and fix only real problems members hit |
-| 2026-06-16 | Reverse two launch-audit cuts | With a real member on the app, a CI gate with branch protection and scrubbed Sentry monitoring were adopted; Sentry went live in production on 2026-09-20 |
+| 2026-06-16 | Reverse two launch-audit cuts | With a real member on the app, a CI gate with branch protection and scrubbed Sentry monitoring were adopted |
 | 2026-09-20 | Freeze ownership and scope columns by trigger | Policies authorize rows, not columns, and a policy cannot stop a row leaving its group |
-| 2026-09-20 | Sign-in links by token hash, plus an 8-digit code | The default link works only in the browser that asked for it, and a phone opens it inside the mail app's own browser; in production, 11 of 19 sign-in links that never completed were tapped within seconds and still failed |
+| 2026-09-20 | Sign-in links by token hash, plus an 8-digit code | The default link works only in the browser that asked for it, and a phone opens it inside the mail app's own browser, so links tapped within seconds still failed |
 | 2026-09-21 | The human check runs before anything about an invite | Order, not a second verification, closes the oracle |
 | 2026-09-21 | Per-actor email caps in one locked statement | A global cap hands the flooder the outage; read-then-write loses the race |
 
@@ -124,12 +124,12 @@ flowchart TB
 
 - **Write policies need the same scrutiny as read policies.** A row could change the very column its read policy scopes on.
 - **A limit that reads and then writes is not a limit.** The check and the record have to be one locked statement.
-- **A local stack is not evidence about production.** Production's `anon` role held full table grants on the 18 original tables for three months while every local and CI run showed none. RLS held, so nothing was readable; a migration revoked the grants.
-- **Scope is a decision with a date on it.** The launch audit cut Sentry and a CI gate. Two days later, with a real member using the app, both were adopted, and Sentry began reporting from production once its DSN was set on 2026-09-20. Both the cut and the reversal are on record.
+- **A local stack is not evidence about production.** Default privileges and auth rate limits differ between the two, so grants are now stated explicitly in a migration rather than trusted to defaults, and production's own configuration is read before a number about it is quoted.
+- **Scope is a decision with a date on it.** The launch audit cut Sentry and a CI gate. Two days later, with a real member using the app, both were adopted. Both the cut and the reversal are on record, with the reasons.
 
 ## Results
 
-- **Live since June 2026** with real members (22 by 2026-09-24) and three moderators
+- **Live since June 2026** with real members, moderated by members
 - **46 database migrations, 25 tables**, row-level security enabled on every one
 - **707 Vitest tests and 118 Playwright tests** (one skipped by design) green locally on 2026-09-21, with 38 integration test files proving the RLS rules against a real local Postgres in CI
 - **82 pull requests merged** to `main` by 2026-09-25
@@ -143,9 +143,9 @@ flowchart TB
 | Production | Live | Serving on its own domain since 2026-06-15, two days after the first commit |
 | Directory, Reconnect, forum and study groups | Live | Per-field contact privacy enforced in the database; mutual opt-in connections; public, private and hidden groups with events |
 | Trust and safety | Live | Invite and vouch, moderator review queue, report, block, suspend, action log |
-| Human check, error monitoring, notifications | Live | Turnstile enforced on join; Sentry live and push keys set in production on 2026-09-20 |
-| Weekly summary email | Built | As of 2026-09-23 the route refuses every run until its secret is set |
-| Photos and files on posts, Markdown subset, long-post folding, forum index layout | Merged | Merged 2026-09-24 and 2026-09-25; their production deploy is not on record |
+| Human check, error monitoring, notifications | Live | Turnstile enforced on join; Sentry and web push live in production since 2026-09-20 |
+| Weekly summary email | Built | Not yet switched on in production as of 2026-09-23 |
+| Photos and files on posts, Markdown subset, long-post folding, forum index layout | Merged | Merged to `main` on 2026-09-24 and 2026-09-25 |
 
 ---
 

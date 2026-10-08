@@ -1,6 +1,6 @@
 # Architecture: On the Lees
 
-This page goes one level below the [README](../README.md). Every name below (tables, functions, routes) is from the private repository; no member data appears here.
+This page goes one level below the [README](../README.md). Table and route names are from the private repository; no member data appears here.
 
 ---
 
@@ -59,7 +59,7 @@ sequenceDiagram
     Note over V,J: The link GET does not spend the token, so mail scanners and previews cannot burn it
     J->>A: verifyOtp(token_hash)
     V->>J: finish onboarding (profile)
-    J->>DB: redeem_invite_for (service role): vouch inserted
+    J->>DB: redeem the invite (service role): vouch inserted
     DB->>DB: trigger sets is_verified
     J-->>V: redirect to the forum
 ```
@@ -68,7 +68,7 @@ sequenceDiagram
 |------|----------------------------|
 | Invite code at the request door | A bound code is redeemed at the end of onboarding; the vouch trigger verifies them |
 | No code | They wait on `/pending`; a moderator's approval is a vouch, so it verifies them the same way |
-| A code obtained later | `/pending`, Apply Code: five tries an hour per account, counted in a server-only table before any code is read |
+| A code obtained later | `/pending`, Apply Code: limited per account by the hour, counted in a server-only table before any code is read |
 
 - **Members share codes; they do not mint them.** Only a moderator or the service role creates an invite, each with a use cap and an expiry.
 - **The app never calls Cloudflare's verification endpoint.** The token is single use, and verifying it in the app would spend it, so Auth would reject every real sign-in.
@@ -106,9 +106,9 @@ erDiagram
     profiles |o--o{ mod_actions : "actor"
 ```
 
-The other five hold notification settings (`notification_prefs`, `push_subscriptions`) and server-only counters and watermarks that no client role holds a grant on (`notification_sends`, `invite_attempts`, `weekly_summaries`).
+The other five hold notification settings and the server-only counters and watermarks that no client role holds a grant on.
 
-**One forum table for everything.** The lobby and every group's forum are the same `threads` table, scoped by `group_id` (NULL is the lobby), and every group-scoped read goes through one SQL helper, `can_read_group(gid)`. Private and hidden groups read identically and differ only in whether the group can be discovered.
+**One forum table for everything.** The lobby and every group's forum are the same `threads` table, scoped by `group_id` (NULL is the lobby), and every group-scoped read goes through one SQL helper. Private and hidden groups read identically and differ only in whether the group can be discovered.
 
 ---
 
@@ -120,12 +120,12 @@ Four techniques close the gaps that policies alone leave open.
 |-----------|------------------|
 | **Freeze triggers** on ownership and scope columns | An UPDATE policy authorizes the row, not the column. A `WITH CHECK` sees only the new row, so it cannot stop a row leaving its group |
 | **`security definer` helpers** with explicit grants | Helpers avoid policy recursion; a policy is checked as the calling role, so its predicates keep a grant to `authenticated` |
-| **A private schema** for predicates about another member | `is_blocked_pair` and `contact_field_visible` live where the API does not expose them, so they cannot be called as an oracle |
+| **A private schema** for predicates about another member | The block check and the contact-visibility check live where the API does not expose them, so they cannot be called as an oracle |
 | **Server-only tables** (RLS on, no policy, no grant) | Counters and watermarks a member must never read or move |
 
-**Contact privacy is enforced in the database.** The `member_contacts` base table is readable only by its owner. Everyone else reads through `visible_contacts()`, which nulls each field the caller may not see under its owner's setting: Any Member, Connections Only, or Hidden.
+**Contact privacy is enforced in the database.** The `member_contacts` base table is readable only by its owner. Everyone else reads through one function that nulls each field the caller may not see under its owner's setting: Any Member, Connections Only, or Hidden.
 
-**Moderation leaves a record.** `mod_actions` is append-only and no client can write it. Suspensions, restores, role changes, vouches, report resolutions, group deletions and moderator deletes of another member's content each write a row.
+**Moderation leaves a record.** The moderator action log is append-only and no client can write it. Suspensions, restores, role changes, vouches, report resolutions, group deletions and moderator deletes of another member's content each write a row.
 
 ---
 
@@ -133,7 +133,7 @@ Four techniques close the gaps that policies alone leave open.
 
 | | Photos | Files |
 |---|---|---|
-| Bucket (private) | `post-images`: PNG, JPEG, WebP, GIF, 10 MB | `post-files`: PDF, plain text, CSV, 25 MB |
+| Accepted (private bucket) | PNG, JPEG, WebP, GIF, up to 10 MB | PDF, plain text, CSV, up to 25 MB |
 | Stored as | Resized and re-encoded on the device, so EXIF and GPS data never leave it | Byte for byte, under a generated name |
 | Limit | 4 per post, by a check constraint | 4 per post, by a trigger under an advisory lock |
 | Opened by | A URL signed for an hour when the page renders | `/files/<id>`, which checks access and answers `303` to a URL signed for 60 seconds, always as a download |
@@ -155,30 +155,27 @@ flowchart TB
     SUS -->|"no"| SKIP["Nothing sent"]
     SUS -->|"yes"| PREF{"Preferences<br/>readable?"}
     PREF -->|"no"| SKIP
-    PREF -->|"email on for this type"| ERES["reserve_notification_send()<br/>email rules, per-actor lock<br/>(system mail is not capped)"]
-    PREF -->|"push on for this type<br/>and a device registered"| PRES["reserve_notification_send()<br/>push ration, per-actor lock"]
+    PREF -->|"email on for this type"| ERES["reserve an email<br/>email rules, per-actor lock<br/>(system mail is not capped)"]
+    PREF -->|"push on for this type<br/>and a device registered"| PRES["reserve a push<br/>push ration, per-actor lock"]
     ERES -->|"allowed"| MAIL["Resend<br/>+ signed unsubscribe link"]
     ERES -->|"capped or<br/>counter unreadable"| LOG["Email skipped,<br/>one log line"]
     PRES -->|"allowed"| PUSH["Web Push"]
     PRES -->|"over ration"| DROP["Dropped silently,<br/>one log line"]
 ```
 
-| Rule | Limit |
-|------|-------|
-| Email, per actor | 20 an hour, 40 a day (under half the shared daily quota) |
-| Email, same actor to same recipient, same type and subject | Once in 15 minutes, 5 a day |
-| Push, same actor to same recipient, same type, any subject | Once in 10 minutes, 20 a day |
-| Push, per actor | 80 an hour, 200 a day |
-| Members added in one call | 20 (one call is one burst of mail) |
+- **Email is capped per actor**, by the hour and by the day, so one member can spend under half the shared daily quota.
+- **One actor to one recipient** about the same type and subject is spaced out by minutes and capped by the day, which closes the cancel-and-repeat loops without taking the second reply of an afternoon.
+- **Push has its own, wider limits** that ignore the subject, because making a group is free and a window keyed on the group is one new group away from no window at all.
+- **A bulk add is capped at the hour's allowance**, since each add mails the member added.
 
-- **Decided and recorded in one statement.** `reserve_notification_send` takes a per-actor advisory lock, so one member's sends queue behind each other and nobody else waits. A counter that cannot be read skips the email; the member's action still succeeds.
+- **Decided and recorded in one statement.** The reservation is one `security definer` function under a per-actor advisory lock, so one member's sends queue behind each other and nobody else waits. A counter that cannot be read skips the email; the member's action still succeeds.
 - **The weekly summary** claims each member's watermark row before their message goes out, so two overlapping runs cannot both mail the same member.
 
 ---
 
 ## 7. Privacy in Monitoring and Caching
 
-- **Sentry, errors first.** No session replay, `sendDefaultPii: false`, tracing at a 10% sample rate, and a scrubber that trims exception messages, because a database error can carry a member's email or phone. It was a silent no-op until its DSN was set in production on 2026-09-20.
+- **Sentry, errors first.** No session replay, `sendDefaultPii: false`, light sampled tracing, and a scrubber that trims exception messages, because a database error can carry a member's email or phone.
 - **No offline cache.** The service worker has no fetch handler. Phones get shared, and member pages must not stay in a browser cache after sign-out.
 
 ---
@@ -200,16 +197,13 @@ flowchart LR
 
 - **RLS is proved, not assumed.** Integration tests sign in as different members against a real local Supabase to prove a non-member cannot read anything newly gated. A structural test fails the build if any public table lacks RLS or `anon` is granted a table privilege.
 - **End-to-end tests run against a production build**, on desktop Chromium, with twelve phone-critical surfaces run again on iPhone WebKit. Specs sign in through the real door with the one-time token the email carries.
-- **A tap-target guard** on iPhone WebKit measures the controls on the main pages, apart from a short commented list of exemptions, and fails when one drops under 44 by 44 pixels. It was added after 229 of 463 controls measured under the rule.
+- **A tap-target guard** on iPhone WebKit measures the controls on the main pages, apart from a short commented list of exemptions, and fails when one drops under 44 by 44 pixels. It was added after a measurement found nearly half the controls under the rule.
 - **The project's Definition of Done** for a pull request also lists unit tests for new logic, an RLS test for anything newly gated, an end-to-end happy path, screenshots at 1280 and 390 pixels actually looked at, and the copy lint. Branch protection requires the build and test checks and resolved review threads; end-to-end runs for signal.
 
 ---
 
-## 9. Operations and Known Limits
+## 9. Operations
 
 - **Deploys are manual** from the Vercel CLI. Rollback is promoting the previous production deployment.
-- **Recovery** is Supabase's daily backups, with no point-in-time recovery, so a destructive service-role operation could lose up to a day.
-- **A five-minute weekly checklist** replaces a monitoring stack. It covers stuck sign-ups, the review queue, server errors, the email quota and backups, among other items.
+- **A short weekly checklist** stands in for a monitoring stack: stuck sign-ups, the review queue, server errors, the email quota and backups, among other items.
 - **Test walks never write production as the owner or with test content**, apart from a one-time smoke test. Every other walk uses a throwaway member and a private group.
-- **No pagination, no digests beyond the weekly summary, no in-app notification feed.** The membership is small, and the standing rule is no feature additions.
-- **The local stack is not evidence about production limits.** Auth rate limits and default privileges differ, so production's own configuration is read before a number is quoted.
