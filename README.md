@@ -23,7 +23,7 @@ The requirements that followed:
 
 ## Architecture
 
-Three checks gate every member page: `proxy.ts`, the `(authed)` layout, and Postgres row-level security, which binds every read and write a member's session makes. Server code that has to act beyond one member's rights, such as invite redemption, the storage sweep and the send counters, runs as the service role or a `security definer` function, which RLS does not bind by design.
+Three checks gate every member page: `proxy.ts`, the `(authed)` layout, and Postgres row-level security, which binds every read and write a member's session makes. Server code that has to act beyond one member's rights, such as invite redemption and the storage sweep, runs as the service role, which RLS does not bind by design; the send counters sit behind a `security definer` function that only the service role may call.
 
 ```mermaid
 flowchart TB
@@ -73,7 +73,7 @@ flowchart TB
 | **`proxy.ts`** | Next 16's replacement for middleware. Refreshes the Supabase session and sends any signed-out request for a non-public route to `/join`. Public routes: `/`, `/join`, `/auth/*`, `/legal/*`, the install page, the web manifest, the push service worker, the unsubscribe link, and the weekly cron route, which checks its own bearer secret |
 | **`(authed)` layout** | A signed-in visitor with no profile goes to onboarding, and one not yet verified waits on `/pending` |
 | **Row-level security** | RLS is on for every table in the `public` schema. Member-facing tables carry members-only policies for the `authenticated` role; three server-only tables carry no policy and no grant. `anon` is denied everywhere and holds no table grant |
-| **Private Storage** | Private buckets, own-folder uploads, short-lived signed URLs, read policies that follow the post; the app's uploader re-encodes photos in the browser, so their EXIF metadata, GPS location included, is never uploaded |
+| **Private Storage** | Private buckets, own-folder uploads, short-lived signed URLs, read policies that follow the post; photos uploaded through the app are re-encoded in the browser first, so their EXIF metadata, GPS location included, is not uploaded |
 | **`deliver()`** | The path for every notification except the transactional access-approved email: the suspended check, preferences, per-member send limits, and a signed one-click unsubscribe link |
 
 ## Tech Stack
@@ -100,7 +100,7 @@ flowchart TB
 
 **Challenge**: The single-use Turnstile token is verified in one place only, inside Supabase Auth's sign-in call; verifying it in the app as well would spend it first, and Auth would then reject every real sign-in. Anything the join action does before that call runs without a human check, and the join action used to read the invite code there.
 
-**Solution**: The join action now sends the sign-in email first and reads the invite code only after Supabase accepts. A failed send looks up and writes nothing, and the answer is identical for a valid code, an invalid one and none. Applying a code after sign-in is limited per account by the hour, counted in a server-only table before any code is read, and it fails closed.
+**Solution**: The join action now sends the sign-in email first and reads the invite code only after Supabase accepts. A failed send looks up and writes nothing, and the page shows the same answer for a valid code, an invalid one and none. Applying a code after sign-in is limited per account by the hour, counted in a server-only table before any code is read, and it fails closed.
 
 ### 3. Mail Limits That Hold Under a Parallel Burst
 
@@ -146,7 +146,7 @@ As the repository records it at the head of `main` (2026-09-25):
 | Area | Status | Description |
 |------|--------|-------------|
 | Production | Live | Serving on its own domain since 2026-06-15 |
-| Directory, Reconnect, forum and study groups | Live | Per-field contact privacy enforced in the database; mutual opt-in connections; public, private and hidden groups with events |
+| Directory, Reconnect, forum and study groups | Live | Per-field contact privacy enforced in the database, by a function that nulls each field the viewer may not see; mutual opt-in connections; public, private and hidden groups with events |
 | Trust and safety | Live | Invite and vouch, moderator review queue, report, block, suspend, action log |
 | Human check, error monitoring, notifications | Live | Turnstile enforced on join; Sentry and web push live in production since 2026-09-20 |
 | Weekly summary email | Built | Not switched on in production: its cron route refuses every run until its secret is set |

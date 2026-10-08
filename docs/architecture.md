@@ -6,7 +6,7 @@ On the Lees is a members-only, real-name network for sommeliers and wine profess
 
 ## 1. Three Gates on Every Member Request
 
-Access to a member page is checked three times. The database check binds every read and write a member's session makes. Server code that has to act beyond one member's rights (invite lookups and redemption, the storage sweep, the send counters) runs as the service role or a `security definer` function, which RLS does not bind by design.
+Access to a member page is checked three times. The database check binds every read and write a member's session makes. Server code that has to act beyond one member's rights (invite lookups and redemption, the storage sweep) runs as the service role, which RLS does not bind by design; the send counters sit behind a `security definer` function that only the service role may call.
 
 ```mermaid
 flowchart LR
@@ -28,7 +28,7 @@ flowchart LR
 | `(authed)` layout | No profile goes to onboarding; an unverified profile goes to `/pending` |
 | Row-level security | RLS is on for every table in the `public` schema; member-facing tables carry members-only policies for the `authenticated` role, and server-only tables carry none. `anon` holds no table privilege. Server code reads identity with `getUser()`, never `getSession()` |
 
-**Not crawled, and marked noindex.** `robots.ts` disallows every crawler from every path, and every response also carries `noindex`, in the root metadata and in an `X-Robots-Tag` header that covers non-HTML responses.
+**Crawlers disallowed, and every response marked noindex.** `robots.ts` disallows every crawler from every path, and every response also carries `noindex`, in the root metadata and in an `X-Robots-Tag` header that covers non-HTML responses.
 
 ---
 
@@ -71,7 +71,7 @@ sequenceDiagram
 | A code obtained later | `/pending`, Apply Code: limited per account by the hour, counted in a server-only table before any code is read |
 
 - **Members share codes; they do not mint them.** Only a moderator creates an invite, in the app or through the service role with the moderator recorded as its creator, and each has a use cap and an expiry.
-- **A code binds only if its creator can still vouch.** A code with no creator, or one whose creator is no longer a verified member, is never bound, so its holder waits for a moderator like anyone without a code.
+- **A code binds only if its creator can still vouch.** A code whose creator has deleted their account (which empties its creator field) or is no longer a verified member is never bound, so its holder waits for a moderator like anyone without a code.
 - **The app never calls Cloudflare's verification endpoint.** The token is single use, and verifying it in the app would spend it, so Auth would reject every real sign-in.
 
 ---
@@ -146,7 +146,7 @@ Four techniques close the gaps that policies alone leave open.
 
 ## 6. Notifications
 
-Notifications go through one function, `deliver()`, because a second place to send is how a rule goes missing from one of the eight email templates. Seven of the eight go through it; the exception is the access-approved email, sent once when a person is let in: it is transactional, like the sign-in email, so there is no preference or unsubscribe to apply. Sign-in mail is Supabase Auth's own and never passes through the app.
+Seven of the eight notification emails, and every push, go through one function, `deliver()`, because a second place to send is how a rule goes missing from one template. The eighth is the access-approved email, sent once when a person is let in: it is transactional, like the sign-in email, so there is no preference or unsubscribe to apply. Sign-in mail is Supabase Auth's own and never passes through the app.
 
 ```mermaid
 flowchart TB
