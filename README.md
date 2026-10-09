@@ -6,7 +6,9 @@
 
 **This repository documents the architecture and design decisions for On the Lees. The implementation is private, and so is the network: there is no public demo and no member data appears here.**
 
-[Architecture](docs/architecture.md) · [Decisions](docs/decisions.md)
+[Portfolio case study](https://jamesshehan.dev/projects/on-the-lees)
+
+Other showcases: [Connect](https://github.com/AIJSAI/connect-voice-ai-showcase) · [Ratify](https://github.com/AIJSAI/ratify-showcase) · [Vinny](https://github.com/AIJSAI/vinny-showcase) · [Hive](https://github.com/AIJSAI/hive-showcase) · [Backyard](https://github.com/AIJSAI/backyard-showcase) · [The Chief](https://github.com/AIJSAI/operating-partner-showcase)
 
 ---
 
@@ -75,6 +77,8 @@ flowchart TB
 | **Row-level security** | RLS is on for every table in the `public` schema. Member-facing tables carry members-only policies for the `authenticated` role; three server-only tables carry no policy and no grant. `anon` is denied everywhere and holds no table grant |
 | **Private Storage** | Private buckets, own-folder uploads, short-lived signed URLs, read policies that follow the post; photos uploaded through the app are re-encoded in the browser first, so their EXIF metadata, GPS location included, is not uploaded |
 | **`deliver()`** | The path for every notification except the transactional access-approved email: the suspended check, preferences, per-member send limits, and a signed one-click unsubscribe link |
+
+Detail: [docs/architecture.md](docs/architecture.md).
 
 ## Tech Stack
 
